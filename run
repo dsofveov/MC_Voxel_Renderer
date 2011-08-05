@@ -1,0 +1,4 @@
+#!/bin/bash
+
+6g ./voxelrender.go && 6l ./voxelrender.6
+
