@@ -27,6 +27,25 @@ type nbt struct {
 	tagCompound []*nbt
 }
 var decoderSyncChan = make(chan int)
+type block struct {
+	x int16
+	y uint8
+	z int16
+	blockType uint8
+}
+type setOfBlocks struct {
+	blocks [10000]*block
+	lastSet uint8
+}
+var blockChan = make(chan *setOfBlocks)
+type octree struct {
+	parent *octree
+	blockType uint8
+	x int16
+	y uint8
+	z int16
+	children [8]*octree
+}
 
 func main() {
 	flag.Parse()
@@ -55,18 +74,23 @@ func main() {
 		fmt.Println("Error: problem reading region directory (", error, ")")
 		os.Exit(1)
 	}
+	go octreeProcessor()
 	for i := 0; i < len(files); i++ {
 		go processRegion(path, files[i])
 	}
 	for i := 0; i < len(files); i++ {
 		<- decoderSyncChan
 	}
-	fmt.Println("Done!")
-	for {
-	}
+	var endBlocks *setOfBlocks = new(setOfBlocks)
+	endBlocks.lastSet = 1
+	blockChan <- endBlocks
+	<- blockChan
 }
 
 func processRegion(path string, filename string) {
+	var currentSet *setOfBlocks
+	var currentBlock *block
+	var setCounter uint16
 	regex := regexp.MustCompile(`r\.(-?[0-9]+)\.(-?[0-9]+)\.mcr`)
 	regionFile, error := os.Open(path + filename)
 	if error != nil {
@@ -77,10 +101,8 @@ func processRegion(path string, filename string) {
 		fmt.Println("Warning: skipping unusually-named file '", filename, "'")
 	} else {
 		matches := regex.FindAllStringSubmatch(filename, 1)
-//		regionX
-		_, err1 := strconv.Atoi(matches[0][1])
-//		regionZ
-		_, err2 := strconv.Atoi(matches[0][2])
+		regionX, err1 := strconv.Atoi(matches[0][1])
+		regionZ, err2 := strconv.Atoi(matches[0][2])
 		if err1 != nil || err2 != nil {
 			fmt.Println("Error: failed to extract coordinates from file '", filename, "'")
 			os.Exit(1)
@@ -134,6 +156,9 @@ func processRegion(path string, filename string) {
 					chunkNbt = chunkNbt.tagCompound[0].tagCompound[0]
 					
 					//	Extract data from the nbt tree and add to our own
+					currentSet = new(setOfBlocks)
+					currentSet.lastSet = 0
+					setCounter = 0
 					for i := 0; i < len(chunkNbt.tagCompound); i++ {
 						thisElement := chunkNbt.tagCompound[i]
 						switch thisElement.tagName {
@@ -142,13 +167,28 @@ func processRegion(path string, filename string) {
 							for x := 0; x < 16; x++ {
 								for z := 0; z < 16; z++ {
 									for y := 0; y < 128; y++ {
-//										newRegion.chunks[chunkX][chunkZ].blocks[x][y][z] = thisElement.tagPayload[counter]
+										currentBlock = new (block)
+										currentBlock.blockType = uint8(thisElement.tagPayload[counter])
+										if currentBlock.blockType != 0 {
+											currentBlock.x = int16(regionX * 512) + int16(chunkX * 16) + int16(x)
+											currentBlock.y = uint8(y)
+											currentBlock.z = int16(regionZ * 512) + int16(chunkZ * 16) + int16(z)
+											currentSet.blocks[setCounter] = currentBlock
+											setCounter++
+											if (setCounter == 10000) {
+												blockChan <- currentSet
+												setCounter = 0
+												currentSet = new(setOfBlocks)
+												currentSet.lastSet = 0
+											}
+										}
 										counter++
 									}
 								}
 							}
 						}
 					}
+					blockChan <- currentSet
 				}
 			}
 		}
@@ -158,6 +198,31 @@ func processRegion(path string, filename string) {
 		os.Exit(1)
 	}
 	decoderSyncChan <- 1
+}
+
+func octreeProcessor() {
+	var currentSet *setOfBlocks
+	counter := 0
+	done := 0
+	// initialise octree
+	for done == 0 {
+		currentSet = <- blockChan
+		setCounter := 0
+		if currentSet.lastSet == 1 {
+			done = 1
+		} else {
+			for setCounter < 10000 && currentSet.blocks[setCounter] != nil {
+				if counter % 1000000 == 0 {
+					fmt.Println(counter, setCounter, currentSet.blocks[setCounter].x, currentSet.blocks[setCounter].y,  currentSet.blocks[setCounter].z)
+				}
+				// process the block
+				setCounter++
+				counter++
+			}
+		}
+	}
+	fmt.Println("Blocks processed:", counter)
+	blockChan <- currentSet
 }
 
 func nbtReader(rawData []byte, output chan *nbt) {
