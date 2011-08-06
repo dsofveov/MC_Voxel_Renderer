@@ -40,14 +40,23 @@ type setOfBlocks struct {
 var blockChan = make(chan *setOfBlocks)
 type octree struct {
 	parent *octree
+	leaf bool
 	blockType uint8
 	x int16
-	y uint8
+	y int16
 	z int16
 	children [8]*octree
+	scale uint8
 }
+var octreeRoot *octree = new(octree)
 
 func main() {
+	octreeRoot.parent = octreeRoot
+	octreeRoot.x = 0
+	octreeRoot.y = 0
+	octreeRoot.z = 0
+	octreeRoot.scale = 15
+	octreeRoot.leaf = false
 	flag.Parse()
 	path := string(*worldPath)
 	runtime.GOMAXPROCS(int(threads))
@@ -203,19 +212,18 @@ func processRegion(path string, filename string) {
 func octreeProcessor() {
 	var currentSet *setOfBlocks
 	counter := 0
-	done := 0
-	// initialise octree
-	for done == 0 {
+	done := false
+	for !done {
 		currentSet = <- blockChan
 		setCounter := 0
 		if currentSet.lastSet == 1 {
-			done = 1
+			done = true
 		} else {
 			for setCounter < 10000 && currentSet.blocks[setCounter] != nil {
 				if counter % 1000000 == 0 {
 					fmt.Println(counter, setCounter, currentSet.blocks[setCounter].x, currentSet.blocks[setCounter].y,  currentSet.blocks[setCounter].z)
 				}
-				// process the block
+				addToTree(currentSet.blocks[setCounter], octreeRoot)
 				setCounter++
 				counter++
 			}
@@ -223,6 +231,73 @@ func octreeProcessor() {
 	}
 	fmt.Println("Blocks processed:", counter)
 	blockChan <- currentSet
+}
+
+func addToTree(toAdd *block, entryPoint *octree) {
+	if entryPoint.scale == 0 {
+		entryPoint.blockType = toAdd.blockType
+		checkBack := entryPoint.parent
+		keepGoing := true
+		for checkBack != octreeRoot && keepGoing {
+			if checkBack.children[0] != nil && checkBack.children[1] != nil && checkBack.children[2] != nil && checkBack.children[3] != nil && checkBack.children[4] != nil && checkBack.children[5] != nil && checkBack.children[6] != nil && checkBack.children[7] != nil {
+				if checkBack.children[0].leaf && checkBack.children[1].leaf && checkBack.children[2].leaf && checkBack.children[3].leaf && checkBack.children[4].leaf && checkBack.children[5].leaf && checkBack.children[6].leaf && checkBack.children[7].leaf {
+					if checkBack.children[0].blockType == toAdd.blockType && checkBack.children[1].blockType == toAdd.blockType && checkBack.children[2].blockType == toAdd.blockType && checkBack.children[3].blockType == toAdd.blockType && checkBack.children[4].blockType == toAdd.blockType && checkBack.children[5].blockType == toAdd.blockType && checkBack.children[6].blockType == toAdd.blockType && checkBack.children[7].blockType == toAdd.blockType {
+						checkBack.children[0] = nil
+						checkBack.children[1] = nil
+						checkBack.children[2] = nil
+						checkBack.children[3] = nil
+						checkBack.children[4] = nil
+						checkBack.children[5] = nil
+						checkBack.children[6] = nil
+						checkBack.children[7] = nil
+						checkBack.leaf = true
+						checkBack.blockType = toAdd.blockType
+						checkBack = checkBack.parent
+					} else {
+						keepGoing = false
+					}
+				} else {
+					keepGoing = false
+				}
+			} else {
+				keepGoing = false
+			}
+		}
+	} else {
+		var deltaX int16 = 0
+		var deltaY int16 = 0
+		var deltaZ int16 = 0
+		var delta uint16 = 1 << (entryPoint.scale - 1)
+		deltaX = -int16(delta)
+		deltaY = -int16(delta)
+		deltaZ = -int16(delta)
+		pos := 0
+		if toAdd.x >= entryPoint.x {
+			deltaX = int16(delta) - 1
+			pos = 4
+		}
+		if int16(toAdd.y) >= entryPoint.y {
+			deltaY = int16(delta) - 1
+			pos += 2
+		}
+		if toAdd.z >= entryPoint.z {
+			deltaZ = int16(delta) - 1
+			pos++
+		}
+		if entryPoint.children[pos] == nil {
+			entryPoint.children[pos] = new(octree)
+			entryPoint.children[pos].parent = entryPoint
+			entryPoint.children[pos].leaf = false
+			if entryPoint.scale == 1 {
+				entryPoint.children[pos].leaf = true
+			}
+			entryPoint.children[pos].x = entryPoint.x + deltaX
+			entryPoint.children[pos].y = entryPoint.y + deltaY
+			entryPoint.children[pos].z = entryPoint.z + deltaZ
+			entryPoint.children[pos].scale = entryPoint.scale - 1
+		}
+		addToTree(toAdd, entryPoint.children[pos])
+	}
 }
 
 func nbtReader(rawData []byte, output chan *nbt) {
