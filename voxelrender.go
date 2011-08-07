@@ -10,13 +10,14 @@ import (	"os";
 		"io/ioutil";
 		"compress/zlib";
 		"strings";
-		"bytes";)
+		"bytes";
+		"time";)
 
 var threads uint
 func init() {
 	flag.UintVar(&threads, "threads", 8, "Number of threads in which to run")
 }
-var worldPath = flag.String("worldPath", "/var/lib/minecraft/1.7/world", "Path to the world Folder.  Required")
+var worldPath = flag.String("worldPath", "/home/nick/our_world", "Path to the world Folder.  Required")
 type nbt struct {
 	parent *nbt
 	tagType uint8
@@ -84,11 +85,19 @@ func main() {
 		os.Exit(1)
 	}
 	go octreeProcessor()
+	var threadCount uint = 0
 	for i := 0; i < len(files); i++ {
+		threadCount++
+		fmt.Println("started file", i)
 		go processRegion(path, files[i])
+		if threadCount >= threads {
+			<- decoderSyncChan
+			threadCount--
+		}
 	}
-	for i := 0; i < len(files); i++ {
+	for threadCount > 0 {
 		<- decoderSyncChan
+		threadCount--
 	}
 	var endBlocks *setOfBlocks = new(setOfBlocks)
 	endBlocks.lastSet = 1
@@ -220,16 +229,21 @@ func octreeProcessor() {
 			done = true
 		} else {
 			for setCounter < 10000 && currentSet.blocks[setCounter] != nil {
-				if counter % 1000000 == 0 {
-					fmt.Println(counter, setCounter, currentSet.blocks[setCounter].x, currentSet.blocks[setCounter].y,  currentSet.blocks[setCounter].z)
-				}
 				addToTree(currentSet.blocks[setCounter], octreeRoot)
 				setCounter++
 				counter++
+				if counter % 1000000 == 0 {
+					fmt.Println("Added block", counter)
+				}
 			}
 		}
 	}
 	fmt.Println("Blocks processed:", counter)
+var treeCounter [32]uint32
+treeCounter = recursiveCount(octreeRoot, treeCounter)
+fmt.Println(treeCounter)
+	fmt.Println("Blocks processed:", counter)
+	time.Sleep(10000000000)
 	blockChan <- currentSet
 }
 
@@ -264,24 +278,21 @@ func addToTree(toAdd *block, entryPoint *octree) {
 			}
 		}
 	} else {
-		var deltaX int16 = 0
-		var deltaY int16 = 0
-		var deltaZ int16 = 0
 		var delta uint16 = 1 << (entryPoint.scale - 1)
-		deltaX = -int16(delta)
-		deltaY = -int16(delta)
-		deltaZ = -int16(delta)
+		var deltaX int16 = -int16(delta)
+		var deltaY int16 = -int16(delta)
+		var deltaZ int16 = -int16(delta)
 		pos := 0
 		if toAdd.x >= entryPoint.x {
-			deltaX = int16(delta) - 1
+			deltaX = int16(delta)
 			pos = 4
 		}
 		if int16(toAdd.y) >= entryPoint.y {
-			deltaY = int16(delta) - 1
+			deltaY = int16(delta)
 			pos += 2
 		}
 		if toAdd.z >= entryPoint.z {
-			deltaZ = int16(delta) - 1
+			deltaZ = int16(delta)
 			pos++
 		}
 		if entryPoint.children[pos] == nil {
@@ -298,6 +309,19 @@ func addToTree(toAdd *block, entryPoint *octree) {
 		}
 		addToTree(toAdd, entryPoint.children[pos])
 	}
+}
+
+func recursiveCount(octree *octree, counter [32]uint32) ([32]uint32) {
+	counter[octree.scale]++
+	if octree.leaf {
+		counter[octree.scale + 16]++
+	}
+	for i := 0; i < 8; i++ {
+		if octree.children[i] != nil {
+			counter = recursiveCount(octree.children[i], counter)
+		}
+	}
+	return counter
 }
 
 func nbtReader(rawData []byte, output chan *nbt) {
