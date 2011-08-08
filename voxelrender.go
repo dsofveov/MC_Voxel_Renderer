@@ -1,6 +1,7 @@
 package main
 
 import (	"os";
+		"time";
 		"flag";
 		"runtime";
 		"fmt";
@@ -10,8 +11,7 @@ import (	"os";
 		"io/ioutil";
 		"compress/zlib";
 		"strings";
-		"bytes";
-		"time";)
+		"bytes";)
 
 var threads uint
 func init() {
@@ -88,7 +88,6 @@ func main() {
 	var threadCount uint = 0
 	for i := 0; i < len(files); i++ {
 		threadCount++
-		fmt.Println("started file", i)
 		go processRegion(path, files[i])
 		if threadCount >= threads {
 			<- decoderSyncChan
@@ -103,6 +102,9 @@ func main() {
 	endBlocks.lastSet = 1
 	blockChan <- endBlocks
 	<- blockChan
+time.Sleep(5000000000)
+runtime.GC()
+time.Sleep(5000000000)
 }
 
 func processRegion(path string, filename string) {
@@ -232,9 +234,6 @@ func octreeProcessor() {
 				addToTree(currentSet.blocks[setCounter], octreeRoot)
 				setCounter++
 				counter++
-				if counter % 1000000 == 0 {
-					fmt.Println("Added block", counter)
-				}
 			}
 		}
 	}
@@ -242,8 +241,6 @@ func octreeProcessor() {
 var treeCounter [32]uint32
 treeCounter = recursiveCount(octreeRoot, treeCounter)
 fmt.Println(treeCounter)
-	fmt.Println("Blocks processed:", counter)
-	time.Sleep(10000000000)
 	blockChan <- currentSet
 }
 
